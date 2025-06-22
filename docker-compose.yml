@@ -1,0 +1,88 @@
+services:
+  postgres1:
+    image: postgres:latest
+    container_name: postgres1
+    hostname: postgres1
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres1_data:/var/lib/postgresql/data
+      - ./pg-config/postgresql1.conf:/etc/postgresql/postgresql.conf
+      - ./pg-config/pg_hba1.conf:/etc/postgresql/pg_hba.conf
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+    networks:
+      - postgres-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres2:
+    image: postgres:latest
+    container_name: postgres2
+    hostname: postgres2
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_REPLICATION_MODE: master
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: replicator123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres2_data:/var/lib/postgresql/data
+      - ./pg-config/postgresql2.conf:/etc/postgresql/postgresql.conf
+      - ./pg-config/pg_hba2.conf:/etc/postgresql/pg_hba.conf
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+    networks:
+      - postgres-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres1:
+        condition: service_healthy
+
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    platform: linux/amd64
+    container_name: pgbouncer
+    environment:
+      DATABASES_HOST: postgres1,postgres2
+      DATABASES_PORT: 5432
+      DATABASES_USER: postgres
+      DATABASES_PASSWORD: postgres123
+      DATABASES_DB: testdb
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 25
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer:/etc/pgbouncer
+    networks:
+      - postgres-network
+    depends_on:
+      - postgres1
+      - postgres2
+
+volumes:
+  postgres1_data:
+  postgres2_data:
+
+networks:
+  postgres-network:
+    driver: bridge

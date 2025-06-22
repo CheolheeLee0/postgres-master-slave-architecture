@@ -1,7 +1,7 @@
 services:
-  postgres1:
+  postgres_master:
     image: postgres:latest
-    container_name: postgres_test_1
+    container_name: postgres_master
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -9,29 +9,40 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - postgres1_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - postgres_master_data:/var/lib/postgresql/data
+      - ./init-scripts/master:/docker-entrypoint-initdb.d
     networks:
       - test_network
+    command: |
+      postgres 
+      -c wal_level=replica 
+      -c max_wal_senders=10 
+      -c max_replication_slots=10 
+      -c wal_keep_size=64MB
+      -c hot_standby=on
+      -c archive_mode=on
+      -c archive_command='test ! -f /tmp/%f && cp %p /tmp/%f'
 
-  postgres2:
+  postgres_slave:
     image: postgres:latest
-    container_name: postgres_test_2
+    container_name: postgres_slave
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      PGUSER: postgres
     ports:
       - "15433:5432"
     volumes:
-      - postgres2_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - postgres_slave_data:/var/lib/postgresql/data
     networks:
       - test_network
+    depends_on:
+      - postgres_master
 
 volumes:
-  postgres1_data:
-  postgres2_data:
+  postgres_master_data:
+  postgres_slave_data:
 
 networks:
   test_network:

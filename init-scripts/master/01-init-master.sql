@@ -1,6 +1,7 @@
+-- Master 데이터베이스 초기화
+
 -- Replication 사용자 생성
 CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_password';
-GRANT ALL PRIVILEGES ON DATABASE postgres TO replicator;
 
 -- 테스트 테이블 생성
 CREATE TABLE IF NOT EXISTS users (
@@ -64,3 +65,12 @@ CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON products
 
 CREATE TRIGGER update_orders_updated_at BEFORE UPDATE ON orders
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 샘플 데이터 삽입
+INSERT INTO users (username, email) VALUES 
+    ('master_user1', 'master1@test.com'),
+    ('master_user2', 'master2@test.com');
+
+INSERT INTO products (name, description, price, stock_quantity) VALUES 
+    ('Master Product 1', 'Product created on master', 99.99, 10),
+    ('Master Product 2', 'Another product from master', 149.99, 5);

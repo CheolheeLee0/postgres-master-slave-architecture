@@ -132,4 +132,4 @@ docker-compose down -v
 - Slave server is read-only (hot standby mode)
 - Automatic failover is not configured (manual promotion required)
 - Data is replicated from master to slave in real-time
-- This setup provides high availability for read operations
+- This setup provides high availability for read operations# postgres-master-slave-architecture

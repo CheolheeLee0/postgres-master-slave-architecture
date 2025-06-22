@@ -18,10 +18,12 @@ services:
       -c wal_level=replica 
       -c max_wal_senders=10 
       -c max_replication_slots=10 
-      -c wal_keep_size=64MB
+      -c wal_keep_size=128MB
       -c hot_standby=on
       -c archive_mode=on
       -c archive_command='test ! -f /tmp/%f && cp %p /tmp/%f'
+      -c synchronous_commit=on
+      -c checkpoint_completion_target=0.9
 
   postgres_slave:
     image: postgres:latest
@@ -39,6 +41,15 @@ services:
       - test_network
     depends_on:
       - postgres_master
+    command: |
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c hot_standby=on
+      -c hot_standby_feedback=on
+      -c max_standby_streaming_delay=30s
+      -c max_standby_archive_delay=30s
+      -c wal_receiver_timeout=60s
 
 volumes:
   postgres_master_data:

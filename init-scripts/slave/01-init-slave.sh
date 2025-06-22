@@ -27,9 +27,11 @@ touch /var/lib/postgresql/data/standby.signal
 # postgresql.conf에 복제 설정 추가
 cat >> /var/lib/postgresql/data/postgresql.conf << EOF
 
-# Slave specific settings
-primary_conninfo = 'host=postgres_master port=5432 user=replicator password=replicator_password'
-promote_trigger_file = '/tmp/promote_to_master'
+# PostgreSQL 17 Standby settings
+primary_conninfo = 'host=postgres_master port=5432 user=replicator password=replicator_password application_name=slave_node'
+primary_slot_name = 'slave_slot'
+restore_command = ''
+archive_cleanup_command = ''
 EOF
 
 echo "Slave initialization completed!"

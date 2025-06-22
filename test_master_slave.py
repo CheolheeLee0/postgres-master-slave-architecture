@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
 """
-PostgreSQL Master-Slave 복제 테스트 스크립트
+PostgreSQL 17 Master-Slave 복제 테스트 스크립트
+
+이 스크립트는 PostgreSQL 17의 물리 스트리밍 복제를 테스트합니다.
+
+테스트 항목:
+1. 기본 데이터 삽입 및 복제 확인
+2. 데이터 업데이트 및 복제 확인  
+3. Slave 읽기 전용 확인
+4. 데이터 동기화 상태 확인
+5. 대량 데이터 복제 테스트
+6. 복제 성능 및 지연 시간 측정
+7. 복제 상태 모니터링 (슬롯, WAL 등)
+
+요구사항:
+- psycopg2-binary
+- Master (port 15432), Slave (port 15433) 실행 중
+- 복제 설정 완료 상태
+
+사용법:
+python test_master_slave.py
 """
 
 import psycopg2
@@ -161,6 +180,63 @@ def test_master_slave_replication():
             print("   ✗ 데이터 동기화 실패!")
             return False
         
+        print(f"\n6. 대량 데이터 복제 테스트")
+        # 대량 데이터 삽입 테스트
+        batch_size = 100
+        print(f"   Master에 {batch_size}개의 사용자 일괄 삽입 중...")
+        
+        batch_data = []
+        for i in range(batch_size):
+            batch_data.append((f"batch_user_{test_time}_{i}", f"batch_{i}_{test_time}@test.com"))
+        
+        master_cur.executemany(
+            "INSERT INTO users (username, email) VALUES (%s, %s)",
+            batch_data
+        )
+        
+        time.sleep(3)  # 복제 대기
+        
+        # Slave에서 일괄 삽입된 데이터 확인
+        slave_cur.execute("SELECT COUNT(*) FROM users WHERE username LIKE %s", (f"batch_user_{test_time}_%",))
+        batch_count = slave_cur.fetchone()[0]
+        
+        if batch_count == batch_size:
+            print(f"   ✓ 대량 데이터 복제 성공! {batch_count}/{batch_size}개 복제됨")
+        else:
+            print(f"   ✗ 대량 데이터 복제 실패! {batch_count}/{batch_size}개만 복제됨")
+            return False
+        
+        print(f"\n7. 복제 성능 측정")
+        # 복제 지연 시간 측정
+        start_time = datetime.now()
+        
+        # Master에 타임스탬프와 함께 데이터 삽입
+        timestamp_user = f"perf_test_{test_time}"
+        master_cur.execute(
+            "INSERT INTO users (username, email, created_at) VALUES (%s, %s, %s) RETURNING created_at",
+            (timestamp_user, f"perf_{test_time}@test.com", start_time)
+        )
+        master_timestamp = master_cur.fetchone()[0]
+        
+        # Slave에서 데이터가 나타날 때까지 대기
+        max_wait = 10  # 최대 10초 대기
+        replicated = False
+        
+        for wait_time in range(max_wait):
+            slave_cur.execute("SELECT created_at FROM users WHERE username = %s", (timestamp_user,))
+            result = slave_cur.fetchone()
+            if result:
+                end_time = datetime.now()
+                replication_delay = (end_time - start_time).total_seconds()
+                print(f"   ✓ 복제 지연 시간: {replication_delay:.2f}초")
+                replicated = True
+                break
+            time.sleep(1)
+        
+        if not replicated:
+            print(f"   ✗ 복제 성능 테스트 실패! {max_wait}초 내에 복제되지 않음")
+            return False
+        
         print("\n" + "=" * 60)
         print("🎉 모든 Master-Slave 복제 테스트가 성공적으로 완료되었습니다!")
         print("=" * 60)
@@ -187,14 +263,28 @@ def check_replication_status():
     if master_conn:
         try:
             master_cur = master_conn.cursor()
-            master_cur.execute("SELECT client_addr, state, sync_state FROM pg_stat_replication;")
+            
+            # 복제 상태 확인
+            master_cur.execute("SELECT client_addr, application_name, state, sync_state FROM pg_stat_replication;")
             results = master_cur.fetchall()
             print("Master 복제 상태:")
             if results:
                 for row in results:
-                    print(f"  - Client: {row[0]}, State: {row[1]}, Sync: {row[2]}")
+                    print(f"  - Client: {row[0]}, App: {row[1]}, State: {row[2]}, Sync: {row[3]}")
             else:
                 print("  - 연결된 복제 클라이언트가 없습니다.")
+            
+            # 복제 슬롯 상태 확인 (PostgreSQL 17)
+            master_cur.execute("SELECT slot_name, slot_type, active, restart_lsn FROM pg_replication_slots;")
+            slots = master_cur.fetchall()
+            print("Master 복제 슬롯 상태:")
+            if slots:
+                for slot in slots:
+                    active_status = "활성" if slot[2] else "비활성"
+                    print(f"  - Slot: {slot[0]}, Type: {slot[1]}, Status: {active_status}, LSN: {slot[3]}")
+            else:
+                print("  - 복제 슬롯이 없습니다.")
+                
         except Exception as e:
             print(f"Master 상태 확인 실패: {e}")
         finally:
@@ -203,13 +293,26 @@ def check_replication_status():
     if slave_conn:
         try:
             slave_cur = slave_conn.cursor()
+            
+            # 복구 모드 확인
             slave_cur.execute("SELECT pg_is_in_recovery();")
             is_recovery = slave_cur.fetchone()[0]
             print(f"Slave 복구 모드: {'Yes (정상)' if is_recovery else 'No (문제 있음)'}")
             
-            slave_cur.execute("SELECT pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn();")
-            result = slave_cur.fetchone()
-            print(f"Slave WAL 상태: Received={result[0]}, Replayed={result[1]}")
+            if is_recovery:
+                # WAL 상태 확인
+                slave_cur.execute("SELECT pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn();")
+                result = slave_cur.fetchone()
+                print(f"Slave WAL 상태: Received={result[0]}, Replayed={result[1]}")
+                
+                # 복제 지연 확인 (PostgreSQL 17)
+                slave_cur.execute("SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::int;")
+                lag_result = slave_cur.fetchone()
+                if lag_result[0] is not None:
+                    print(f"복제 지연: {lag_result[0]}초")
+                else:
+                    print("복제 지연: 측정 불가 (트랜잭션 없음)")
+            
         except Exception as e:
             print(f"Slave 상태 확인 실패: {e}")
         finally:

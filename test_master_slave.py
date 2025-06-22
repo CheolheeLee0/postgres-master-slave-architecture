@@ -44,8 +44,10 @@ SLAVE_CONFIG = {
     'password': 'postgres'
 }
 
-def connect_to_db(config, db_name="Master" if config == MASTER_CONFIG else "Slave"):
+def connect_to_db(config, db_name=None):
     """데이터베이스 연결"""
+    if db_name is None:
+        db_name = "Master" if config == MASTER_CONFIG else "Slave"
     try:
         conn = psycopg2.connect(**config)
         conn.autocommit = True
@@ -87,8 +89,8 @@ def test_master_slave_replication():
         print(f"   Master에 사용자 삽입 완료: ID={user_id}, username={user_data}")
         
         # 복제 대기
-        print("   복제 대기 중... (5초)")
-        time.sleep(5)
+        print("   복제 대기 중... (1초)")
+        time.sleep(1)
         
         # Slave에서 데이터 확인
         print("   Slave에서 복제된 데이터 확인:")
@@ -110,7 +112,7 @@ def test_master_slave_replication():
         product_id = master_cur.fetchone()[0]
         print(f"   Master에 제품 삽입: ID={product_id}, name={product_name}")
         
-        time.sleep(3)
+        time.sleep(1)
         
         # Slave에서 제품 확인
         slave_cur.execute("SELECT id, name, price FROM products WHERE name = %s", (product_name,))
@@ -130,16 +132,17 @@ def test_master_slave_replication():
         )
         print(f"   Master에서 제품 가격 업데이트: {new_price}")
         
-        time.sleep(3)
+        time.sleep(1)
         
         # Slave에서 업데이트된 정보 확인
         slave_cur.execute("SELECT price FROM products WHERE id = %s", (product_id,))
         result = slave_cur.fetchone()
         
-        if result and result[0] == new_price:
+        if result and float(result[0]) == float(new_price):
             print(f"   ✓ 업데이트 복제 성공! Slave에서 확인된 가격: {result[0]}")
         else:
-            print("   ✗ 업데이트 복제 실패!")
+            current_price = result[0] if result else "결과 없음"
+            print(f"   ✗ 업데이트 복제 실패! 예상: {new_price}, 실제: {current_price}")
             return False
         
         print(f"\n4. Slave에서 읽기 전용 확인")
@@ -194,7 +197,7 @@ def test_master_slave_replication():
             batch_data
         )
         
-        time.sleep(3)  # 복제 대기
+        time.sleep(1)  # 복제 대기
         
         # Slave에서 일괄 삽입된 데이터 확인
         slave_cur.execute("SELECT COUNT(*) FROM users WHERE username LIKE %s", (f"batch_user_{test_time}_%",))
@@ -216,13 +219,14 @@ def test_master_slave_replication():
             "INSERT INTO users (username, email, created_at) VALUES (%s, %s, %s) RETURNING created_at",
             (timestamp_user, f"perf_{test_time}@test.com", start_time)
         )
-        master_timestamp = master_cur.fetchone()[0]
+        result = master_cur.fetchone()
+        master_timestamp = result[0] if result else None
         
         # Slave에서 데이터가 나타날 때까지 대기
         max_wait = 10  # 최대 10초 대기
         replicated = False
         
-        for wait_time in range(max_wait):
+        for _ in range(max_wait):
             slave_cur.execute("SELECT created_at FROM users WHERE username = %s", (timestamp_user,))
             result = slave_cur.fetchone()
             if result:

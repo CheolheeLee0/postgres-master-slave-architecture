@@ -60,8 +60,8 @@ docker stop postgres_slave || true
 # 베이스 백업을 위한 임시 컨테이너 실행
 echo "베이스 백업 생성 중..."
 docker run --rm \
-  --network test-db_test_network \
-  -v test-db_postgres_slave_data:/var/lib/postgresql/data \
+  --network postgres-master-slave_test_network \
+  -v postgres-master-slave_postgres_slave_data:/var/lib/postgresql/data \
   postgres:latest bash -c "
     rm -rf /var/lib/postgresql/data/*
     PGPASSWORD=replicator_password pg_basebackup -h postgres_master -D /var/lib/postgresql/data -U replicator -v -P

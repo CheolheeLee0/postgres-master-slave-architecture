@@ -48,7 +48,7 @@ def test_write_operation(params, name):
         
         # Try to insert a record
         cursor.execute("""
-            INSERT INTO users (name, email) 
+            INSERT INTO users (username, email) 
             VALUES ('test_failover', 'failover@test.com')
             RETURNING id
         """)

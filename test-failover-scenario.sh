@@ -46,10 +46,10 @@ echo "--------------------------------"
 echo "Let's verify that only master can accept writes"
 echo ""
 echo "Test writing to master (should succeed):"
-echo 'docker exec postgres_master psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('"'"'test_user'"'"', '"'"'test@example.com'"'"');"'
+echo 'docker exec postgres_master psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('"'"'test_user'"'"', '"'"'test@example.com'"'"');"'
 echo ""
 echo "Test writing to slave (should fail):"
-echo 'docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('"'"'test_user2'"'"', '"'"'test2@example.com'"'"');"'
+echo 'docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('"'"'test_user2'"'"', '"'"'test2@example.com'"'"');"'
 echo ""
 echo "The slave write should fail with: 'cannot execute INSERT in a read-only transaction'"
 pause
@@ -106,7 +106,7 @@ echo ""
 echo "You should see that the slave (port 15433) is no longer in recovery mode"
 echo ""
 echo "Test write operation on new master (former slave):"
-echo 'docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('"'"'failover_test'"'"', '"'"'failover@test.com'"'"');"'
+echo 'docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('"'"'failover_test'"'"', '"'"'failover@test.com'"'"');"'
 echo ""
 echo "This should now succeed!"
 pause

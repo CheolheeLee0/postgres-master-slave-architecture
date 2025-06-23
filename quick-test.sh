@@ -24,11 +24,11 @@ sleep 2
 # Step 3: Test write operations
 echo "3️⃣ Testing write operations..."
 echo "Writing to Master (should succeed):"
-docker exec postgres_master psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('before_failover', 'before@test.com') RETURNING id, name;"
+docker exec postgres_master psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('before_failover', 'before@test.com') RETURNING id, username;"
 
 echo ""
 echo "Writing to Slave (should fail):"
-docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('slave_test', 'slave@test.com');" 2>&1 || echo "✅ Expected: Slave correctly rejected write operation"
+docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('slave_test', 'slave@test.com');" 2>&1 || echo "✅ Expected: Slave correctly rejected write operation"
 echo ""
 sleep 2
 
@@ -57,7 +57,7 @@ sleep 3
 # Step 7: Test new master
 echo "7️⃣ Testing new Master (former Slave)..."
 echo "Writing to new Master (port 15433):"
-docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (name, email) VALUES ('after_failover', 'after@test.com') RETURNING id, name;"
+docker exec postgres_slave psql -U postgres -d postgres -c "INSERT INTO users (username, email) VALUES ('after_failover', 'after@test.com') RETURNING id, username;"
 echo "✅ New Master accepts writes!"
 echo ""
 

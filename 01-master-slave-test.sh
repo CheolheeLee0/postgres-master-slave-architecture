@@ -266,52 +266,69 @@ docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
 docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
 # 결과 확인: 'f' = Master 모드
 
-# Step 2: 표준 방법 - Timeline ID 및 WAL 위치 확인
+# Step 2: 표준 방법 - WAL 위치 및 타임라인 확인
 # 🔶 1번서버에서 실행
+echo "=== 1번서버 상태 분석 ==="
 docker exec -it rtt-postgres psql -U postgres -c "
 SELECT 
-    pg_control_checkpoint() AS checkpoint_info,
     pg_current_wal_lsn() AS current_wal_lsn,
-    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file;"
+    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file,
+    pg_last_wal_receive_lsn() AS last_receive_lsn,
+    pg_last_wal_replay_lsn() AS last_replay_lsn;"
 
 # 🔶 2번서버에서 실행
+echo "=== 2번서버 상태 분석 ==="
 docker exec -it rtt-postgres psql -U postgres -c "
 SELECT 
-    pg_control_checkpoint() AS checkpoint_info,
     pg_current_wal_lsn() AS current_wal_lsn,
-    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file;"
+    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file,
+    pg_last_wal_receive_lsn() AS last_receive_lsn,
+    pg_last_wal_replay_lsn() AS last_replay_lsn;"
 
 # Step 3: 컨트롤 파일 정보 확인 (가장 확실한 방법)
 # 🔶 1번서버에서 실행
-docker exec rtt-postgres su postgres -c "pg_controldata /var/lib/postgresql/data | grep -E 'Database system identifier|Latest checkpoint location|Latest checkpoint.*timeline|Time of latest checkpoint'"
+echo "=== 1번서버 컨트롤 데이터 ==="
+docker exec rtt-postgres bash -c "su - postgres -c 'pg_controldata /var/lib/postgresql/data'" | grep -E "Database system identifier|Latest checkpoint location|Latest checkpoint's TimeLineID|Time of latest checkpoint"
 
 # 🔶 2번서버에서 실행
-docker exec rtt-postgres su postgres -c "pg_controldata /var/lib/postgresql/data | grep -E 'Database system identifier|Latest checkpoint location|Latest checkpoint.*timeline|Time of latest checkpoint'"
+echo "=== 2번서버 컨트롤 데이터 ==="
+docker exec rtt-postgres bash -c "su - postgres -c 'pg_controldata /var/lib/postgresql/data'" | grep -E "Database system identifier|Latest checkpoint location|Latest checkpoint's TimeLineID|Time of latest checkpoint"
 
-# 판단 기준:
-# 1. Timeline ID가 더 높은 서버가 우선 (timeline이 다르면 분기됨)
+# Step 4: 타임라인 히스토리 확인
+# 🔶 1번서버에서 실행
+echo "=== 1번서버 타임라인 히스토리 ==="
+docker exec -it rtt-postgres psql -U postgres -c "SELECT * FROM pg_control_system();"
+
+# 🔶 2번서버에서 실행
+echo "=== 2번서버 타임라인 히스토리 ==="
+docker exec -it rtt-postgres psql -U postgres -c "SELECT * FROM pg_control_system();"
+
+# 판단 기준 (표준 PostgreSQL 방법):
+# 1. Timeline ID가 더 높은 서버가 우선 (분기된 경우)
 # 2. 같은 timeline이면 LSN이 더 큰 서버가 최신
 # 3. 'Time of latest checkpoint'가 더 최근인 서버가 최신
 
-# Step 4: 실제 데이터 트랜잭션 확인
+# Step 5: 간단한 비교 방법 (실무에서 자주 사용)
 # 🔶 1번서버에서 실행
+echo "=== 1번서버 간단 체크 ==="
 docker exec -it rtt-postgres psql -U postgres -c "
 SELECT 
-    txid_current() AS current_transaction_id,
+    CASE WHEN pg_is_in_recovery() THEN 'SLAVE' ELSE 'MASTER' END AS role,
     pg_current_wal_lsn() AS wal_position,
-    now() AS check_time;"
+    pg_postmaster_start_time() AS start_time;"
 
 # 🔶 2번서버에서 실행
+echo "=== 2번서버 간단 체크 ==="
 docker exec -it rtt-postgres psql -U postgres -c "
 SELECT 
-    txid_current() AS current_transaction_id,
+    CASE WHEN pg_is_in_recovery() THEN 'SLAVE' ELSE 'MASTER' END AS role,
     pg_current_wal_lsn() AS wal_position,
-    now() AS check_time;"
+    pg_postmaster_start_time() AS start_time;"
 
-# 최종 판단 우선순위:
-# 1순위: Timeline ID가 높은 서버
-# 2순위: 같은 timeline에서 LSN이 큰 서버  
-# 3순위: 최근 checkpoint 시간이 더 늦은 서버
+# 최종 판단 우선순위 (실무 기준):
+# 1순위: Timeline ID가 높은 서버 (분기 확인)
+# 2순위: LSN 위치가 더 앞선 서버 (더 많은 트랜잭션 처리)
+# 3순위: 최근에 시작된 서버 (장애조치 후 승격된 서버)
 
 # Step 4: 결정 - 2번 서버를 Master로, 1번 서버를 Slave로 설정
 # (일반적으로 승격된 2번 서버가 최신 데이터를 가지고 있음)

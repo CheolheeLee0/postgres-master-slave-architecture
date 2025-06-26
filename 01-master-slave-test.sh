@@ -252,6 +252,176 @@ docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
 # 결과 't': ✅ Slave로 전환됨 / 결과 'f': ❌ Master로 복구됨 (Split-brain 위험)
 
 # =============================================================================
+# 4-1. Split-brain 문제 수동 해결 (두 서버 모두 Master가 된 경우)
+# =============================================================================
+
+# 상황: 1번 서버가 재시작되면서 두 서버 모두 Master 모드로 실행되는 경우
+
+# Step 1: 현재 상태 확인
+# 🔶 1번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
+# 결과 확인: 'f' = Master 모드
+
+# 🔶 2번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
+# 결과 확인: 'f' = Master 모드
+
+# Step 2: 표준 방법 - Timeline ID 및 WAL 위치 확인
+# 🔶 1번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT 
+    pg_control_checkpoint() AS checkpoint_info,
+    pg_current_wal_lsn() AS current_wal_lsn,
+    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file;"
+
+# 🔶 2번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT 
+    pg_control_checkpoint() AS checkpoint_info,
+    pg_current_wal_lsn() AS current_wal_lsn,
+    pg_walfile_name(pg_current_wal_lsn()) AS current_wal_file;"
+
+# Step 3: 컨트롤 파일 정보 확인 (가장 확실한 방법)
+# 🔶 1번서버에서 실행
+docker exec rtt-postgres su postgres -c "pg_controldata /var/lib/postgresql/data | grep -E 'Database system identifier|Latest checkpoint location|Latest checkpoint.*timeline|Time of latest checkpoint'"
+
+# 🔶 2번서버에서 실행
+docker exec rtt-postgres su postgres -c "pg_controldata /var/lib/postgresql/data | grep -E 'Database system identifier|Latest checkpoint location|Latest checkpoint.*timeline|Time of latest checkpoint'"
+
+# 판단 기준:
+# 1. Timeline ID가 더 높은 서버가 우선 (timeline이 다르면 분기됨)
+# 2. 같은 timeline이면 LSN이 더 큰 서버가 최신
+# 3. 'Time of latest checkpoint'가 더 최근인 서버가 최신
+
+# Step 4: 실제 데이터 트랜잭션 확인
+# 🔶 1번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT 
+    txid_current() AS current_transaction_id,
+    pg_current_wal_lsn() AS wal_position,
+    now() AS check_time;"
+
+# 🔶 2번서버에서 실행
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT 
+    txid_current() AS current_transaction_id,
+    pg_current_wal_lsn() AS wal_position,
+    now() AS check_time;"
+
+# 최종 판단 우선순위:
+# 1순위: Timeline ID가 높은 서버
+# 2순위: 같은 timeline에서 LSN이 큰 서버  
+# 3순위: 최근 checkpoint 시간이 더 늦은 서버
+
+# Step 4: 결정 - 2번 서버를 Master로, 1번 서버를 Slave로 설정
+# (일반적으로 승격된 2번 서버가 최신 데이터를 가지고 있음)
+
+# 🔶 1번서버에서 실행 - PostgreSQL 중지
+docker stop rtt-postgres
+
+# 🔶 1번서버에서 실행 - 기존 데이터 백업
+docker exec rtt-postgres bash -c "
+if [ -d /var/lib/postgresql/data ]; then
+    mv /var/lib/postgresql/data /var/lib/postgresql/data_splitbrain_backup_$(date +%Y%m%d_%H%M%S)
+fi
+mkdir -p /var/lib/postgresql/data
+chown postgres:postgres /var/lib/postgresql/data
+"
+
+# 🔶 1번서버에서 실행 - 2번 서버(Master)에서 베이스 백업
+docker exec rtt-postgres bash -c "
+PGPASSWORD=replicator_password pg_basebackup \\
+    -h 10.164.32.92 \\
+    -D /var/lib/postgresql/data \\
+    -U replicator \\
+    -v -P
+"
+
+# 🔶 1번서버에서 실행 - Slave 설정
+docker exec rtt-postgres bash -c "
+# standby.signal 파일 생성
+touch /var/lib/postgresql/data/standby.signal
+
+# Slave 복제 설정 추가
+cat >> /var/lib/postgresql/data/postgresql.conf << 'EOF'
+
+# Split-brain 복구 - Slave 설정
+primary_conninfo = 'host=10.164.32.92 port=5432 user=replicator password=replicator_password application_name=server1_slave'
+primary_slot_name = 'slave_slot'
+recovery_target_timeline = 'latest'
+hot_standby = on
+EOF
+"
+
+# 🔶 2번서버에서 실행 - 1번 서버용 복제 슬롯 생성 (필요시)
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT pg_create_physical_replication_slot('slave_slot');
+" 
+# 이미 존재하면 ERROR 무시
+
+# 🔶 1번서버에서 실행 - PostgreSQL 재시작
+docker start rtt-postgres
+
+# Step 5: Split-brain 해결 확인
+# 🔶 1번서버에서 실행 - Slave 모드 확인
+docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
+# 결과 't': ✅ Slave로 설정됨
+
+# 🔶 2번서버에서 실행 - Master 모드 확인
+docker exec -it rtt-postgres psql -U postgres -c "SELECT pg_is_in_recovery();"
+# 결과 'f': ✅ Master 유지됨
+
+# 🔶 2번서버에서 실행 - 복제 연결 확인
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT application_name, client_addr, state, sync_state 
+FROM pg_stat_replication;"
+# 1번 서버의 연결이 보이면 ✅ 복제 연결 성공
+
+# Step 6: 데이터 동기화 테스트
+# 🔶 2번서버에서 실행 - 테스트 데이터 삽입
+docker exec -it rtt-postgres psql -U postgres -c "
+INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
+VALUES ('splitbrain_resolved_$(date +%s)', 'splitbrain_test@example.com', 'test_password', NOW(), NOW());"
+
+# 🔶 1번서버에서 실행 - 동기화 확인 (몇 초 후)
+docker exec -it rtt-postgres psql -U postgres -c "
+SELECT COUNT(*) FROM \"Auth\" WHERE \"emailAddress\" = 'splitbrain_test@example.com';"
+# 결과 1: ✅ Split-brain 해결 및 동기화 성공
+
+# =============================================================================
+# 4-2. 예방책: standby.signal 파일 자동 보호
+# =============================================================================
+
+# 1번서버에서 실행 - standby.signal 파일 보호 스크립트 생성
+# 🔶 1번서버에서 실행
+docker exec rtt-postgres bash -c "
+cat > /var/lib/postgresql/data/protect_standby.sh << 'PROTECT_EOF'
+#!/bin/bash
+# standby.signal 파일 보호 스크립트
+SIGNAL_FILE=/var/lib/postgresql/data/standby.signal
+
+# PostgreSQL 시작 전 standby.signal 파일 존재 여부 확인
+if [ ! -f \"\$SIGNAL_FILE\" ] && [ -f /var/lib/postgresql/data/was_slave_marker ]; then
+    echo \"[$(date)] standby.signal 파일 복구\" >> /var/lib/postgresql/data/postgresql.log
+    touch \"\$SIGNAL_FILE\"
+fi
+PROTECT_EOF
+
+chmod +x /var/lib/postgresql/data/protect_standby.sh
+
+# Slave 마커 파일 생성
+touch /var/lib/postgresql/data/was_slave_marker
+"
+
+echo "✅ Split-brain 문제 해결 완료"
+echo "📋 해결 과정:"
+echo "1. 현재 상태 및 데이터 확인"
+echo "2. 최신 데이터를 가진 서버를 Master로 선택"
+echo "3. 다른 서버를 Slave로 재설정"
+echo "4. 베이스 백업 및 복제 설정"
+echo "5. 동기화 확인"
+
+# =============================================================================
 # 5. Slave 장애 시뮬레이션 테스트
 # =============================================================================
 

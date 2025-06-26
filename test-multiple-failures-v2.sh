@@ -1,4 +1,6 @@
 #!/bin/bash
+# 운영1번서버 10.164.32.91 
+# 운영2번서버 10.164.32.92
 
 # Test multiple server failures (4 times) - Improved version
 # This script tests failover and recovery scenarios multiple times

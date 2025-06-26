@@ -2,373 +2,587 @@
 # PostgreSQL Master-Slave 수동 테스트 가이드
 # 운영1서버: 10.164.32.91 (Master)
 # 운영2서버: 10.164.32.92 (Slave)
-# 각 명령어를 순서대로 복사하여 실행하세요
 
-# PostgreSQL Master-Slave 수동 테스트 시작
-# 시작 시간: $(date)
+# =============================================================================
+# 목차
+# =============================================================================
+# 1. 초기 연결 및 상태 확인
+# 2. 복제 상태 확인  
+# 3. 데이터 동기화 테스트
+# 4. Master 장애 시뮬레이션 테스트
+# 5. Slave 장애 시뮬레이션 테스트
+# 6. 성능 테스트
+# 7. 데이터 일관성 최종 확인
 
 # =============================================================================
 # 1. 초기 연결 및 상태 확인
 # =============================================================================
 
-# 1. 초기 연결 및 상태 확인
+# 1번서버에서 테스트 - Master 서버 연결 테스트
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT version();
+\q
+exit
+exit
+# 성공: ✅ Master 연결 성공 / 실패: ❌ Master 연결 실패
 
-# Master 서버 연결 테스트 (관리 서버에서 실행)
-# Master 서버 연결 테스트 중...
-psql -h 10.164.32.91 -U postgres -c "SELECT version();"
-# 연결 성공한 경우: ✅ Master 서버 (10.164.32.91) 연결 성공
-# 연결 실패한 경우: ❌ Master 서버 (10.164.32.91) 연결 실패
+# 2번서버에서 테스트 - Slave 서버 연결 테스트
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT version();
+\q
+exit
+exit
+# 성공: ✅ Slave 연결 성공 / 실패: ❌ Slave 연결 실패
 
-# Slave 서버 연결 테스트 (관리 서버에서 실행)
-# Slave 서버 연결 테스트 중...
-psql -h 10.164.32.92 -U postgres -c "SELECT version();"
-# 연결 성공한 경우: ✅ Slave 서버 (10.164.32.92) 연결 성공
-# 연결 실패한 경우: ❌ Slave 서버 (10.164.32.92) 연결 실패
+# 1번서버에서 테스트 - Master 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 결과 'f': ✅ Master 모드 / 결과 't': ❌ Master 모드 아님
 
-# Master 상태 확인 (관리 서버에서 실행)
-# Master 상태 확인 중...
-psql -h 10.164.32.91 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 결과가 'f' 인 경우: ✅ 10.164.32.91이 Master 모드로 실행 중
-# 결과가 't' 인 경우: ❌ 10.164.32.91이 Master 모드가 아님
-
-# Slave 상태 확인 (관리 서버에서 실행)
-# Slave 상태 확인 중...
-psql -h 10.164.32.92 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 결과가 't' 인 경우: ✅ 10.164.32.92가 Slave(Recovery) 모드로 실행 중
-# 결과가 'f' 인 경우: ❌ 10.164.32.92가 Slave 모드가 아님
+# 2번서버에서 테스트 - Slave 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 결과 't': ✅ Slave 모드 / 결과 'f': ❌ Slave 모드 아님
 
 # =============================================================================
 # 2. 복제 상태 확인
 # =============================================================================
 
-# 2. 복제 상태 확인
-
-# Master에서 복제 슬롯 확인 (관리 서버에서 실행)
-# 복제 슬롯 상태 확인 중...
-psql -h 10.164.32.91 -U postgres -c "
+# 1번서버에서 테스트 - 복제 슬롯 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
 SELECT slot_name, slot_type, active, 
        pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) as lag
-FROM pg_replication_slots;"
+FROM pg_replication_slots;
+\q
+exit
+exit
 
-# Master에서 WAL Sender 확인 (관리 서버에서 실행)
-# WAL Sender 상태 확인 중...
-psql -h 10.164.32.91 -U postgres -c "
+# 1번서버에서 테스트 - WAL Sender 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
 SELECT pid, usename, application_name, client_addr, state,
        pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) as lag
-FROM pg_stat_replication;"
+FROM pg_stat_replication;
+\q
+exit
+exit
 
-# Slave에서 WAL Receiver 확인 (관리 서버에서 실행)
-# WAL Receiver 상태 확인 중...
-psql -h 10.164.32.92 -U postgres -c "
+# 2번서버에서 테스트 - WAL Receiver 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
 SELECT pid, status, receive_start_lsn, received_lsn,
        last_msg_send_time, last_msg_receipt_time
-FROM pg_stat_wal_receiver;"
+FROM pg_stat_wal_receiver;
+\q
+exit
+exit
 
 # =============================================================================
 # 3. 데이터 동기화 테스트
 # =============================================================================
 
-# 3. 데이터 동기화 테스트
+# 1번서버에서 테스트 - 초기 데이터 개수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
 
-# 초기 레코드 수 확인 (관리 서버에서 실행)
-# 초기 데이터 개수 확인 중...
-psql -h 10.164.32.91 -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\";"
-psql -h 10.164.32.92 -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\";"
-# Master와 Slave의 레코드 수가 같은 경우: ✅ 초기 데이터 동기화 확인됨
-# Master와 Slave의 레코드 수가 다른 경우: ❌ 초기 데이터 동기화 불일치
+# 2번서버에서 테스트 - 초기 데이터 개수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
+# 개수 동일: ✅ 초기 데이터 동기화 확인 / 개수 다름: ❌ 동기화 불일치
 
-# Master에서 테스트 데이터 삽입 (관리 서버에서 실행)
-# Master에서 테스트 데이터 삽입 중...
-TEST_ID=$(date +%s)
-TEST_EMAIL="sync_test_$TEST_ID@example.com"
+# 1번서버에서 테스트 - 테스트 데이터 삽입 (Master에서 실행)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('test_auth_1640995200', 'sync_test_1640995200@example.com', 'hashed_password_1640995200', NOW(), NOW()) 
+RETURNING id;
+\q
+exit
+exit
 
-# Auth 데이터 삽입
-psql -h 10.164.32.91 -U postgres -c "
-INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-VALUES ('test_auth_$TEST_ID', '$TEST_EMAIL', 'hashed_password_$TEST_ID', NOW(), NOW()) 
-RETURNING id;"
+# 1번서버에서 테스트 - User 데이터 삽입 (Master에서 실행)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "User" (id, "authId", role, language, name, "createdAt", "updatedAt") 
+VALUES ('test_user_1640995200', 'test_auth_1640995200', 'CUSTOMER', 'ko', 'Test User 1640995200', NOW(), NOW()) 
+RETURNING id;
+\q
+exit
+exit
 
-# User 데이터 삽입
-psql -h 10.164.32.91 -U postgres -c "
-INSERT INTO \"User\" (id, \"authId\", role, language, name, \"createdAt\", \"updatedAt\") 
-VALUES ('test_user_$TEST_ID', 'test_auth_$TEST_ID', 'CUSTOMER', 'ko', 'Test User $TEST_ID', NOW(), NOW()) 
-RETURNING id;"
+# 동기화 대기 (5초)
 
-# Slave에서 데이터 확인 (관리 서버에서 실행)
-# Slave에서 데이터 동기화 확인 중...
-psql -h 10.164.32.92 -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\" WHERE \"emailAddress\" = '$TEST_EMAIL';"
-# 결과가 '1'인 경우: ✅ Auth 데이터가 Slave로 정상 동기화됨
-# 결과가 '0'인 경우: ❌ Auth 데이터가 Slave로 동기화되지 않음
 
-# JOIN 쿼리로 관계 데이터 확인 (관리 서버에서 실행)
-# 관계 데이터 동기화 확인 중...
-psql -h 10.164.32.92 -U postgres -c "
-SELECT u.id as user_id, u.name, a.\"emailAddress\", u.role
-FROM \"User\" u 
-JOIN \"Auth\" a ON u.\"authId\" = a.id 
-WHERE a.\"emailAddress\" = '$TEST_EMAIL';"
+# 2번서버에서 테스트 - Slave에서 데이터 동기화 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth" WHERE "emailAddress" = 'sync_test_1640995200@example.com';
+\q
+exit
+exit
+# 결과 '1': ✅ 데이터 동기화 됨 / 결과 '0': ❌ 동기화 안됨
+
+# 2번서버에서 테스트 - 관계 데이터 동기화 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT u.id as user_id, u.name, a."emailAddress", u.role
+FROM "User" u 
+JOIN "Auth" a ON u."authId" = a.id 
+WHERE a."emailAddress" = 'sync_test_1640995200@example.com';
+\q
+exit
+exit
 
 # =============================================================================
 # 4. Master 장애 시뮬레이션 테스트
 # =============================================================================
 
-# 4. Master 장애 시뮬레이션 테스트
+# 1번서버에서 테스트 - 장애 전 테스트 데이터 삽입
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('pre_failure_1640995300', 'pre_failure_1640995300@example.com', 'hashed_password', NOW(), NOW());
+\q
+exit
+exit
 
-# 장애 전 데이터 삽입 (관리 서버에서 실행)
-# 장애 전 테스트 데이터 삽입 중...
-FAILURE_TEST_ID=$(date +%s)
-psql -h 10.164.32.91 -U postgres -c "
-INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-VALUES ('pre_failure_$FAILURE_TEST_ID', 'pre_failure_$FAILURE_TEST_ID@example.com', 'hashed_password', NOW(), NOW());"
+# 1번서버에서 테스트 - 장애 전 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
 
-# 장애 전 Master Auth 레코드 수 확인
-psql -h 10.164.32.91 -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\";"
+# 🔶 운영1번 서버(10.164.32.91)에서 실행: sudo systemctl stop postgresql
+read -p "Master 중지 후 Enter..."
 
-echo ""
-echo "🔶 다음 명령어를 운영1번 서버(10.164.32.91)에서 실행하세요:"
-echo "sudo systemctl stop postgresql"
-echo ""
-echo "위 명령어를 실행한 후 Enter를 누르세요..."
-read -r
-
-# Master 연결 불가 확인 (관리 서버에서 실행)
-# Master 연결 불가 확인 중...
+# 관리서버에서 테스트 - Master 연결 불가 확인
 psql -h 10.164.32.91 -U postgres -c "SELECT 1;"
-# 연결 성공한 경우: ❌ Master가 여전히 응답하고 있음
-# 연결 실패한 경우: ✅ Master 서비스가 정상적으로 중지됨
+# 연결 실패: ✅ Master 중지됨 / 연결 성공: ❌ Master 여전히 실행중
 
-# Slave 상태 확인 (관리 서버에서 실행)
-# Slave 생존 확인 중...
-psql -h 10.164.32.92 -U postgres -c "SELECT 1;"
-# 연결 성공한 경우: ✅ Master 장애 시 Slave가 정상 동작 중
-# 연결 실패한 경우: ❌ Master 장애 시 Slave도 응답하지 않음
+# 2번서버에서 테스트 - Slave 생존 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT 1;
+\q
+exit
+exit
+# 연결 성공: ✅ Slave 정상 동작 / 연결 실패: ❌ Slave도 응답 안함
 
-# Slave를 Master로 승격 (관리 서버에서 실행)
-# Slave를 Master로 승격 중...
-psql -h 10.164.32.92 -U postgres -c "SELECT pg_promote();"
+# 2번서버에서 테스트 - Slave를 Master로 승격
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_promote();
+\q
+exit
+exit
 
-# 승격 완료 대기
+# 승격 완료 대기 (5초)
 
-# 승격 확인 (관리 서버에서 실행)
-psql -h 10.164.32.92 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 결과가 'f'인 경우: ✅ Slave가 성공적으로 Master로 승격됨
-# 결과가 't'인 경우: ❌ Slave 승격 후에도 Recovery 모드임
 
-# 새 Master에서 쓰기 테스트 (관리 서버에서 실행)
-# 새 Master에서 쓰기 테스트 중...
-NEW_MASTER_TEST_ID=$(date +%s)
-psql -h 10.164.32.92 -U postgres -c "
-INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-VALUES ('post_failover_$NEW_MASTER_TEST_ID', 'post_failover_$NEW_MASTER_TEST_ID@example.com', 'hashed_password', NOW(), NOW()) 
-RETURNING id;"
-# INSERT 성공한 경우: ✅ 새 Master에서 쓰기 작업 성공
-# INSERT 실패한 경우: ❌ 새 Master에서 쓰기 작업 실패
+# 2번서버에서 테스트 - 승격 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 결과 'f': ✅ 승격 성공 / 결과 't': ❌ 아직 Recovery 모드
 
-echo ""
-echo "🔶 다음 명령어를 운영1번 서버(10.164.32.91)에서 실행하세요:"
-echo "sudo systemctl start postgresql"
-echo ""
-echo "위 명령어를 실행한 후 Enter를 누르세요..."
-read -r
+# 2번서버에서 테스트 - 새 Master에서 쓰기 테스트
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('post_failover_1640995400', 'post_failover_1640995400@example.com', 'hashed_password', NOW(), NOW()) 
+RETURNING id;
+\q
+exit
+exit
+# INSERT 성공: ✅ 새 Master 쓰기 성공 / 실패: ❌ 쓰기 실패
 
-# 복구된 서버 상태 확인 (관리 서버에서 실행)
-# 복구된 서버 상태 확인 중...
-psql -h 10.164.32.91 -U postgres -c "SELECT 1;"
-# 연결이 성공한 경우 다음 명령어 실행:
-psql -h 10.164.32.91 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 결과가 't'인 경우: ✅ 원래 Master가 Slave로 자동 전환됨
-# 결과가 'f'인 경우: ❌ 원래 Master가 Master 모드로 복구됨 (Split-brain 위험)
-# 연결이 실패한 경우: ❌ 원래 Master 서버 복구 실패
+# 🔶 운영1번 서버(10.164.32.91)에서 실행: sudo systemctl start postgresql
+read -p "Master 복구 후 Enter..."
+
+# 원래 Master 복구 대기 (10초)
+
+
+# 1번서버에서 테스트 - 복구된 서버 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT 1;
+\q
+exit
+exit
+# 연결 성공시 다음 명령어 실행:
+
+# 1번서버에서 테스트 - 복구 모드 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 결과 't': ✅ Slave로 전환됨 / 결과 'f': ❌ Master로 복구됨 (Split-brain 위험)
 
 # =============================================================================
 # 5. Slave 장애 시뮬레이션 테스트
 # =============================================================================
 
-# 5. Slave 장애 시뮬레이션 테스트
+# 2번서버에서 테스트 - 현재 Master/Slave 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
 
-# 현재 Master/Slave 확인 (관리 서버에서 실행)
-# 현재 Master/Slave 상태 확인 중...
-psql -h 10.164.32.92 -U postgres -t -c "SELECT pg_is_in_recovery();"
-psql -h 10.164.32.91 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 10.164.32.92 결과가 'f'인 경우: Master는 10.164.32.92(운영2번), Slave는 10.164.32.91(운영1번)
-# 10.164.32.91 결과가 'f'인 경우: Master는 10.164.32.91(운영1번), Slave는 10.164.32.92(운영2번)
+# 1번서버에서 테스트 - 현재 Master/Slave 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 각 서버의 'f': Master / 't': Slave
 
-# 현재 상황에 따라 아래 변수를 수동으로 설정하세요
-CURRENT_MASTER="10.164.32.92"  # 실제 Master IP로 변경
-CURRENT_SLAVE="10.164.32.91"   # 실제 Slave IP로 변경
-SLAVE_SERVER="운영1번"          # 실제 Slave 서버명으로 변경
+# 🔶 운영1번 서버(10.164.32.91)에서 실행: sudo systemctl stop postgresql
+read -p "Slave 중지 후 Enter..."
 
-echo ""
-echo "🔶 다음 명령어를 $SLAVE_SERVER 서버($CURRENT_SLAVE)에서 실행하세요:"
-echo "sudo systemctl stop postgresql"
-echo ""
-echo "위 명령어를 실행한 후 Enter를 누르세요..."
-read -r
+# 관리서버에서 테스트 - Slave 연결 불가 확인
+psql -h 10.164.32.91 -U postgres -c "SELECT 1;"
+# 연결 실패: ✅ Slave 중지됨 / 연결 성공: ❌ Slave 여전히 실행중
 
-# Slave 연결 불가 확인 (관리 서버에서 실행)
-# Slave 연결 불가 확인 중...
-psql -h "$CURRENT_SLAVE" -U postgres -c "SELECT 1;"
-# 연결 성공한 경우: ❌ Slave가 여전히 응답하고 있음
-# 연결 실패한 경우: ✅ Slave 서비스가 정상적으로 중지됨
+# 2번서버에서 테스트 - Master 생존 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT 1;
+\q
+exit
+exit
+# 연결 성공: ✅ Master 정상 동작 / 연결 실패: ❌ Master도 응답 안함
 
-# Master 상태 확인 (관리 서버에서 실행)
-# Master 생존 확인 중...
-psql -h "$CURRENT_MASTER" -U postgres -c "SELECT 1;"
-# 연결 성공한 경우: ✅ Slave 장애 시 Master가 정상 동작 중
-# 연결 실패한 경우: ❌ Slave 장애 시 Master도 응답하지 않음
+# 2번서버에서 테스트 - Master에서 쓰기 작업 테스트 (1회)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('during_slave_failure_1640995500_1', 'during_slave_failure_1640995500_1@example.com', 'hashed_password', NOW(), NOW());
+\q
+exit
+exit
 
-# Master에서 계속 쓰기 작업 테스트 (관리 서버에서 실행)
-# Master에서 쓰기 작업 테스트 중...
-SLAVE_FAILURE_TEST_ID=$(date +%s)
-for i in {1..3}; do
-    WRITE_TEST_ID="${SLAVE_FAILURE_TEST_ID}_$i"
-    echo "쓰기 테스트 $i 실행 중..."
-    psql -h "$CURRENT_MASTER" -U postgres -c "
-    INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-    VALUES ('during_slave_failure_$WRITE_TEST_ID', 'during_slave_failure_$WRITE_TEST_ID@example.com', 'hashed_password', NOW(), NOW());"
-    # INSERT 성공한 경우: ✅ 쓰기 테스트 $i 성공
-    # INSERT 실패한 경우: ❌ 쓰기 테스트 $i 실패
-done
-# 모든 쓰기 테스트가 성공한 경우: ✅ Slave 장애 중에도 Master 쓰기 작업 정상
+# 2번서버에서 테스트 - Master에서 쓰기 작업 테스트 (2회)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('during_slave_failure_1640995500_2', 'during_slave_failure_1640995500_2@example.com', 'hashed_password', NOW(), NOW());
+\q
+exit
+exit
 
-echo ""
-echo "🔶 다음 명령어를 $SLAVE_SERVER 서버($CURRENT_SLAVE)에서 실행하세요:"
-echo "sudo systemctl start postgresql"
-echo ""
-echo "위 명령어를 실행한 후 Enter를 누르세요..."
-read -r
+# 2번서버에서 테스트 - Master에서 쓰기 작업 테스트 (3회)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('during_slave_failure_1640995500_3', 'during_slave_failure_1640995500_3@example.com', 'hashed_password', NOW(), NOW());
+\q
+exit
+exit
+# 모든 INSERT 성공: ✅ Slave 장애 중에도 Master 쓰기 정상
 
-# Slave 복구 확인 (관리 서버에서 실행)
-# Slave 복구 상태 확인 중...
-psql -h "$CURRENT_SLAVE" -U postgres -c "SELECT 1;"
-# 연결이 성공한 경우 다음 명령어 실행:
-psql -h "$CURRENT_SLAVE" -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 결과가 't'인 경우: ✅ Slave가 정상적으로 복구되어 Recovery 모드로 실행 중
-# 결과가 'f'인 경우: ❌ Slave가 Master 모드로 복구됨
-# 연결이 실패한 경우: ❌ Slave 서버 복구 실패
+# 🔶 운영1번 서버(10.164.32.91)에서 실행: sudo systemctl start postgresql
+read -p "Slave 복구 후 Enter..."
 
-# 복제 재연결 확인 (관리 서버에서 실행)
+# Slave 복구 대기 (10초)
 
-psql -h "$CURRENT_MASTER" -U postgres -t -c "SELECT COUNT(*) FROM pg_stat_replication;"
-# 결과가 0보다 큰 경우: ✅ 복제 연결이 재설정됨
-psql -h "$CURRENT_MASTER" -U postgres -c "
+
+# 1번서버에서 테스트 - Slave 복구 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT 1;
+\q
+exit
+exit
+# 연결 성공시 다음 명령어 실행:
+
+# 1번서버에서 테스트 - Slave 복구 모드 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 결과 't': ✅ Slave로 복구됨 / 결과 'f': ❌ Master로 복구됨
+
+# 복제 재연결 확인 (5초 대기)
+
+
+# 2번서버에서 테스트 - 복제 재연결 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM pg_stat_replication;
+\q
+exit
+exit
+# 결과 0보다 큼: ✅ 복제 연결 재설정됨
+
+# 2번서버에서 테스트 - 복제 상태 상세 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
 SELECT application_name, client_addr, state, 
        pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)) as lag
-FROM pg_stat_replication;"
-# 결과가 0인 경우: ❌ 복제 연결이 재설정되지 않음
+FROM pg_stat_replication;
+\q
+exit
+exit
+# 결과 0: ❌ 복제 연결 재설정 안됨
 
 # =============================================================================
 # 6. 성능 테스트
 # =============================================================================
 
-# 6. 성능 테스트
-
-# 대량 데이터 삽입 성능 테스트 (관리 서버에서 실행)
-# 대량 데이터 삽입 성능 테스트 중...
-BULK_COUNT=1000
-echo "시작 시간: $(date)"
-
-psql -h "$CURRENT_MASTER" -U postgres -c "
+# 2번서버에서 테스트 - 대량 데이터 삽입 성능 테스트 (1000개)
+docker exec -it rtt-postgres bash
+su postgres
+psql
 BEGIN;
-INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\")
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt")
 SELECT 
-    'perf_auth_' || generate_series(1, $BULK_COUNT),
-    'perf_user_' || generate_series(1, $BULK_COUNT) || '@example.com',
-    'hashed_password_' || generate_series(1, $BULK_COUNT),
+    'perf_auth_' || generate_series(1, 1000),
+    'perf_user_' || generate_series(1, 1000) || '@example.com',
+    'hashed_password_' || generate_series(1, 1000),
     NOW(),
     NOW();
-COMMIT;"
+COMMIT;
+\q
+exit
+exit
+# INSERT 성공: ✅ 1000개 레코드 삽입 완료 / 실패: ❌ 대량 삽입 실패
 
-echo "종료 시간: $(date)"
-# INSERT 성공한 경우: ✅ 1000개 레코드 삽입 완료
-# INSERT 실패한 경우: ❌ 대량 삽입 실패
+# 2번서버에서 테스트 - 복제 지연 측정 (마커 레코드 사용)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+INSERT INTO "Auth" (id, "emailAddress", "hashedPassword", "createdAt", "updatedAt") 
+VALUES ('sync_marker_1640995600123456789', 'sync_marker_1640995600123456789@example.com', 'hashed_password', NOW(), NOW());
+\q
+exit
+exit
 
-# 복제 지연 측정 (관리 서버에서 실행)
-# 복제 지연 측정 중...
-MARKER_ID=$(date +%s%N)
-echo "마커 삽입 시간: $(date)"
-psql -h "$CURRENT_MASTER" -U postgres -c "
-INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-VALUES ('sync_marker_$MARKER_ID', 'sync_marker_$MARKER_ID@example.com', 'hashed_password', NOW(), NOW());"
-
-# 수동으로 Slave에서 마커 레코드 확인
-echo "Slave에서 다음 명령어로 마커 레코드가 동기화될 때까지 확인:"
-echo "psql -h \"$CURRENT_SLAVE\" -U postgres -t -c \"SELECT COUNT(*) FROM \\\"Auth\\\" WHERE \\\"emailAddress\\\" = 'sync_marker_$MARKER_ID@example.com';\""
-echo "결과가 1이 나올 때까지 반복 실행하고, 동기화 시간을 확인하세요."
-
-# 동시 연결 테스트 (관리 서버에서 실행)
-# 동시 연결 테스트 중...
-CONCURRENT_CONNECTIONS=10
-echo "동시 연결 테스트 시작: $(date)"
-for i in $(seq 1 $CONCURRENT_CONNECTIONS); do
-    {
-        for j in {1..10}; do
-            psql -h "$CURRENT_MASTER" -U postgres -c "
-            INSERT INTO \"Auth\" (id, \"emailAddress\", \"hashedPassword\", \"createdAt\", \"updatedAt\") 
-            VALUES ('concurrent_${i}_${j}', 'concurrent_${i}_${j}@example.com', 'hashed_password', NOW(), NOW());" > /dev/null 2>&1
-        done
-    } &
-done
-
-# 모든 백그라운드 작업 완룉 대기
-wait
-echo "동시 연결 테스트 완료: $(date)"
-# 모든 INSERT가 성공한 경우: ✅ 10개 동시 연결에서 각각 10개 레코드 삽입 완료
-# 일부 INSERT가 실패한 경우: ❌ 동시 연결 테스트 중 일부 실패
+# 1번서버에서 테스트 - Slave에서 마커 레코드 확인 (수동)
+# docker exec -it rtt-postgres bash
+# su postgres
+# psql
+# SELECT COUNT(*) FROM "Auth" WHERE "emailAddress" = 'sync_marker_1640995600123456789@example.com';
+# \q
+# exit
+# exit
+# 결과가 1이 될 때까지 반복 실행하여 동기화 시간 측정
 
 # =============================================================================
 # 7. 데이터 일관성 최종 확인
 # =============================================================================
 
-# 7. 데이터 일관성 최종 확인
+# 복제 완료 대기 (10초)
 
-# 복제 완료 대기
 
-# 주요 테이블들의 레코드 수 비교 (관리 서버에서 실행)
-# 테이블별 레코드 수 비교 중...
-TABLES=("Auth" "User" "ChatRoom" "AccessLog" "Bookmark")
+# 2번서버에서 테스트 - Auth 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
 
-for table in "${TABLES[@]}"; do
-    echo "$table 테이블 확인 중..."
-    psql -h "$CURRENT_MASTER" -U postgres -t -c "SELECT COUNT(*) FROM \"$table\";"
-    psql -h "$CURRENT_SLAVE" -U postgres -t -c "SELECT COUNT(*) FROM \"$table\";"
-    # Master와 Slave의 레코드 수가 같은 경우: ✅ $table 테이블 동기화 확인
-    # Master와 Slave의 레코드 수가 다른 경우: ❌ $table 테이블 동기화 불일치
-done
+# 1번서버에서 테스트 - Auth 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
+# 개수 동일: ✅ Auth 테이블 동기화 확인
 
-# 관계 무결성 확인 (관리 서버에서 실행)
-# 관계 무결성 확인 중...
-psql -h "$CURRENT_SLAVE" -U postgres -t -c "
-SELECT COUNT(*) FROM \"User\" u 
-LEFT JOIN \"Auth\" a ON u.\"authId\" = a.id 
-WHERE a.id IS NULL;"
-# 결과가 0인 경우: ✅ 고아 레코드가 없음 - 관계 무결성 확인
-# 결과가 0보다 큰 경우: ❌ 고아 User 레코드 발견
+# 2번서버에서 테스트 - User 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "User";
+\q
+exit
+exit
+
+# 1번서버에서 테스트 - User 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "User";
+\q
+exit
+exit
+# 개수 동일: ✅ User 테이블 동기화 확인
+
+# 2번서버에서 테스트 - ChatRoom 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "ChatRoom";
+\q
+exit
+exit
+
+# 1번서버에서 테스트 - ChatRoom 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "ChatRoom";
+\q
+exit
+exit
+# 개수 동일: ✅ ChatRoom 테이블 동기화 확인
+
+# 2번서버에서 테스트 - AccessLog 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "AccessLog";
+\q
+exit
+exit
+
+# 1번서버에서 테스트 - AccessLog 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "AccessLog";
+\q
+exit
+exit
+# 개수 동일: ✅ AccessLog 테이블 동기화 확인
+
+# 2번서버에서 테스트 - Bookmark 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Bookmark";
+\q
+exit
+exit
+
+# 1번서버에서 테스트 - Bookmark 테이블 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Bookmark";
+\q
+exit
+exit
+# 개수 동일: ✅ Bookmark 테이블 동기화 확인
+
+# 1번서버에서 테스트 - 관계 무결성 확인 (고아 레코드 검사)
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "User" u 
+LEFT JOIN "Auth" a ON u."authId" = a.id 
+WHERE a.id IS NULL;
+\q
+exit
+exit
+# 결과 0: ✅ 관계 무결성 확인 / 결과 0보다 큼: ❌ 고아 레코드 발견
+
+# 1번서버에서 테스트 - 최종 서버 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+
+# 2번서버에서 테스트 - 최종 서버 상태 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT pg_is_in_recovery();
+\q
+exit
+exit
+# 각 서버의 'f': Master / 't': Slave
+
+# 2번서버에서 테스트 - 최종 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
+
+# 1번서버에서 테스트 - 최종 레코드 수 확인
+docker exec -it rtt-postgres bash
+su postgres
+psql
+SELECT COUNT(*) FROM "Auth";
+\q
+exit
+exit
+# 각 서버의 Auth 레코드 수를 확인하여 동기화 상태 점검
 
 # =============================================================================
-# 최종 결과 출력
+# 테스트 완료
 # =============================================================================
-
-# 테스트 완료 시간: $(date)
-# 현재 서버 상태:
-
-# 최종 서버 상태 확인
-psql -h 10.164.32.91 -U postgres -t -c "SELECT pg_is_in_recovery();"
-psql -h 10.164.32.92 -U postgres -t -c "SELECT pg_is_in_recovery();"
-# 각 서버의 결과가 'f'인 경우: Master
-# 각 서버의 결과가 't'인 경우: Slave
-
-# 최종 레코드 수 확인
-psql -h "$CURRENT_MASTER" -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\";"
-psql -h "$CURRENT_SLAVE" -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\";"
-# 각 서버의 Auth 레코드 수를 확인하여 동기화 상태를 점검하세요
-
-# PostgreSQL Master-Slave 테스트가 완료되었습니다!
-# 테스트 요약:
-# - 초기 연결 및 상태 확인: 완료
-# - 복제 상태 확인: 완료
-# - 데이터 동기화 테스트: 완료
-# - Master 장애 시뮬레이션: 완료
-# - Slave 장애 시뮬레이션: 완료
-# - 성능 테스트: 완료
-# - 데이터 일관성 확인: 완료
+# PostgreSQL Master-Slave 테스트 완료
+# 테스트 항목: 연결확인, 복제상태, 데이터동기화, Master장애, Slave장애, 성능, 일관성

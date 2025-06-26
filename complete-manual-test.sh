@@ -4,6 +4,91 @@
 # 운영2서버: 10.164.32.92 (Slave)
 
 # =============================================================================
+# 0. Master-Slave 초기 설정 (DB는 기존에 생성되어 있음)
+# =============================================================================
+
+# 1번서버에서 실행 - Master 복제 설정
+docker exec -it rtt-postgres bash
+su postgres
+psql
+
+# 복제 사용자 생성
+CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_password';
+
+# 복제 슬롯 생성
+SELECT pg_create_physical_replication_slot('slave_slot');
+
+# 설정 확인
+SELECT slot_name, slot_type, active FROM pg_replication_slots;
+
+\q
+exit
+exit
+
+# 1번서버에서 실행 - postgresql.conf 설정 (컨테이너 외부에서)
+docker exec -it rtt-postgres bash -c "
+cat >> /var/lib/postgresql/data/postgresql.conf << 'EOF'
+
+# Master-Slave 복제 설정
+listen_addresses = '*'
+wal_level = replica
+max_wal_senders = 10
+max_replication_slots = 10
+synchronous_commit = on
+archive_mode = on
+archive_command = 'cp %p /var/lib/postgresql/data/pg_wal_archive/%f || true'
+EOF
+"
+
+# 1번서버에서 실행 - pg_hba.conf 설정
+docker exec -it rtt-postgres bash -c "
+echo 'host replication replicator 10.164.32.92/32 md5' >> /var/lib/postgresql/data/pg_hba.conf
+echo 'host all postgres 10.164.32.92/32 md5' >> /var/lib/postgresql/data/pg_hba.conf
+"
+
+# 1번서버에서 실행 - WAL 아카이브 디렉토리 생성
+docker exec -it rtt-postgres bash -c "
+mkdir -p /var/lib/postgresql/data/pg_wal_archive
+chown postgres:postgres /var/lib/postgresql/data/pg_wal_archive
+chmod 700 /var/lib/postgresql/data/pg_wal_archive
+"
+
+# 1번서버에서 실행 - PostgreSQL 재시작
+docker restart rtt-postgres
+
+# 2번서버에서 실행 - Slave 설정 (기존 데이터 백업 후 베이스 백업)
+docker exec -it rtt-postgres bash
+su postgres
+
+# 기존 데이터 정리 (주의: 데이터 손실)
+rm -rf /var/lib/postgresql/data/*
+
+# Master에서 베이스 백업 생성
+PGPASSWORD=replicator_password pg_basebackup -h 10.164.32.91 -D /var/lib/postgresql/data -U replicator -v -P
+
+# standby.signal 파일 생성
+touch /var/lib/postgresql/data/standby.signal
+
+# postgresql.conf에 복제 설정 추가
+cat >> /var/lib/postgresql/data/postgresql.conf << 'EOF'
+
+# Slave 복제 설정
+primary_conninfo = 'host=10.164.32.91 port=5432 user=replicator password=replicator_password application_name=slave_node'
+primary_slot_name = 'slave_slot'
+restore_command = ''
+archive_cleanup_command = ''
+EOF
+
+exit
+exit
+
+# 2번서버에서 실행 - PostgreSQL 재시작
+docker restart rtt-postgres
+
+# 설정 완료 대기 (10초)
+
+
+# =============================================================================
 # 목차
 # =============================================================================
 # 1. 초기 연결 및 상태 확인

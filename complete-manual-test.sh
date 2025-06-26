@@ -94,10 +94,6 @@ INSERT INTO \"User\" (id, \"authId\", role, language, name, \"createdAt\", \"upd
 VALUES ('test_user_$TEST_ID', 'test_auth_$TEST_ID', 'CUSTOMER', 'ko', 'Test User $TEST_ID', NOW(), NOW()) 
 RETURNING id;"
 
-# 동기화 대기
-# 동기화 대기 중... (5초)
-sleep 5
-
 # Slave에서 데이터 확인 (관리 서버에서 실행)
 # Slave에서 데이터 동기화 확인 중...
 psql -h 10.164.32.92 -U postgres -t -c "SELECT COUNT(*) FROM \"Auth\" WHERE \"emailAddress\" = '$TEST_EMAIL';"
@@ -151,8 +147,7 @@ psql -h 10.164.32.92 -U postgres -c "SELECT 1;"
 # Slave를 Master로 승격 중...
 psql -h 10.164.32.92 -U postgres -c "SELECT pg_promote();"
 
-# 승격 완료 대기 중... (5초)
-sleep 5
+# 승격 완료 대기
 
 # 승격 확인 (관리 서버에서 실행)
 psql -h 10.164.32.92 -U postgres -t -c "SELECT pg_is_in_recovery();"
@@ -175,9 +170,6 @@ echo "sudo systemctl start postgresql"
 echo ""
 echo "위 명령어를 실행한 후 Enter를 누르세요..."
 read -r
-
-# 원래 Master 복구 대기 중... (10초)
-sleep 10
 
 # 복구된 서버 상태 확인 (관리 서버에서 실행)
 # 복구된 서버 상태 확인 중...
@@ -246,9 +238,6 @@ echo ""
 echo "위 명령어를 실행한 후 Enter를 누르세요..."
 read -r
 
-# Slave 복구 대기 중... (10초)
-sleep 10
-
 # Slave 복구 확인 (관리 서버에서 실행)
 # Slave 복구 상태 확인 중...
 psql -h "$CURRENT_SLAVE" -U postgres -c "SELECT 1;"
@@ -259,8 +248,7 @@ psql -h "$CURRENT_SLAVE" -U postgres -t -c "SELECT pg_is_in_recovery();"
 # 연결이 실패한 경우: ❌ Slave 서버 복구 실패
 
 # 복제 재연결 확인 (관리 서버에서 실행)
-# 복제 재연결 확인 중... (5초 대기)
-sleep 5
+
 psql -h "$CURRENT_MASTER" -U postgres -t -c "SELECT COUNT(*) FROM pg_stat_replication;"
 # 결과가 0보다 큰 경우: ✅ 복제 연결이 재설정됨
 psql -h "$CURRENT_MASTER" -U postgres -c "
@@ -335,8 +323,6 @@ echo "동시 연결 테스트 완료: $(date)"
 # 7. 데이터 일관성 최종 확인
 
 # 복제 완료 대기
-# 복제 완료 대기 중... (10초)
-sleep 10
 
 # 주요 테이블들의 레코드 수 비교 (관리 서버에서 실행)
 # 테이블별 레코드 수 비교 중...

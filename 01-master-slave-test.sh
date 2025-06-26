@@ -148,8 +148,9 @@ FROM pg_stat_replication;"
 # 2번서버에서 테스트 - WAL Receiver 상태 확인
 # 🔶 2번서버에서 실행
 docker exec -it rtt-postgres psql -U postgres -c "
-SELECT pid, status, receive_start_lsn, received_lsn,
-       last_msg_send_time, last_msg_receipt_time
+SELECT pid, status, receive_start_lsn, 
+       last_msg_send_time, last_msg_receipt_time,
+       latest_end_lsn, latest_end_time
 FROM pg_stat_wal_receiver;"
 
 # =============================================================================
